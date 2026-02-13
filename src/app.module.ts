@@ -1,0 +1,20 @@
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { AuthModule } from './auth/auth.module';
+import { RidesModule } from './rides/rides.module';
+import { UsersModule } from './users/users.module';
+
+@Module({
+  imports: [
+    // Variables d'environnement disponibles partout
+    ConfigModule.forRoot({ isGlobal: true }),
+    AuthModule,
+    RidesModule,
+    UsersModule,
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
