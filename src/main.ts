@@ -8,29 +8,26 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // ✅ FIX CRITIQUE : Sans ça, les décorateurs @IsEmail(), @IsNumber() etc.
-  // dans les DTOs ne font RIEN. Toutes les données passaient sans validation.
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true,       // Supprime les champs non déclarés dans le DTO
+      whitelist: true,
       forbidNonWhitelisted: false,
-      transform: true,       // Transforme automatiquement les types (string → number)
+      transform: true,
     }),
   );
 
-  // ✅ FIX CORS : En dev, on accepte localhost:5000 (Flutter Web) et 3001 (tests)
-  // En prod, remplace '*' par ton domaine réel
+  // ✅ FIX BUG 5 : CORS ouvert pour Railway + apps mobiles
+  // Les apps mobiles (APK) ne sont pas soumises au CORS, mais le web oui
   app.enableCors({
-    origin: process.env.NODE_ENV === 'production'
-      ? ['https://ton-domaine.com']
-      : '*',
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    credentials: true,
+    origin: '*', // Accepte tout — mobile + web + Railway
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: false, // Doit être false si origin est '*'
   });
 
   const port = process.env.PORT || 3000;
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0'); // '0.0.0.0' important pour Railway
 
-  console.log(`🚀 Koogwz Backend démarré sur http://localhost:${port}`);
+  console.log(`🚀 Koogwz Backend démarré sur le port ${port}`);
 }
 bootstrap();

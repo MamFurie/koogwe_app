@@ -15,71 +15,67 @@ enum Role {
   ADMIN
 }
 
-// MISE À JOUR : Ajout de ARRIVED pour la logique temps réel
 enum RideStatus {
-  REQUESTED   // 1. Client a commandé
-  ACCEPTED    // 2. Chauffeur a accepté (En route vers client)
-  ARRIVED     // 3. Chauffeur est là (Attend le client) <--- AJOUT INDISPENSABLE
-  IN_PROGRESS // 4. Client à bord (En route vers destination)
-  COMPLETED   // 5. Arrivé à destination (Paiement)
-  CANCELLED   // 6. Annulé
+  REQUESTED
+  ACCEPTED
+  ARRIVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+// ✅ FIX BUG 2 : Ajout enum VehicleType
+enum VehicleType {
+  MOTO
+  ECO
+  CONFORT
 }
 
 model User {
   id                String   @id @default(uuid())
   email             String   @unique
-  name              String?  
+  name              String?
   password          String
   phone             String?
   role              Role     @default(PASSENGER)
-  
-  isVerified        Boolean  @default(false) 
-  verificationToken String?  
-  
+  isVerified        Boolean  @default(false)
+  verificationToken String?
   createdAt         DateTime @default(now())
-  
-  // Relation vers le profil chauffeur (si c'est un chauffeur)
-  driverProfile     DriverProfile? 
 
-  // Historique des courses
+  driverProfile     DriverProfile?
   ridesAsPassenger  Ride[]   @relation("PassengerRides")
-  ridesAsDriver     Ride[]   @relation("DriverRides")    
+  ridesAsDriver     Ride[]   @relation("DriverRides")
 }
 
-// MISE À JOUR : Infos complètes du véhicule ici
 model DriverProfile {
   id            String  @id @default(uuid())
   userId        String  @unique
   user          User    @relation(fields: [userId], references: [id])
-  
-  // NOUVEAUX CHAMPS VÉHICULE
-  vehicleMake   String? // Ex: Toyota
-  vehicleModel  String? // Ex: Corolla
-  vehicleColor  String? // Ex: Noir (Ta demande)
-  licensePlate  String? // Ex: TG-4589-BZ
+  vehicleMake   String?
+  vehicleModel  String?
+  vehicleColor  String?
+  licensePlate  String?
 }
 
 model Ride {
   id          String      @id @default(uuid())
-  
-  // Le Client
+
   passengerId String
   passenger   User        @relation("PassengerRides", fields: [passengerId], references: [id])
 
-  // Le Chauffeur
   driverId    String?
   driver      User?       @relation("DriverRides", fields: [driverId], references: [id])
 
-  // GPS Départ
   originLat   Float
   originLng   Float
-  
-  // GPS Arrivée
   destLat     Float
   destLng     Float
 
-  price       Float       
-  status      RideStatus  @default(REQUESTED)
+  price       Float
 
+  // ✅ FIX BUG 2 : vehicleType stocké en BDD
+  vehicleType VehicleType @default(MOTO)
+
+  status      RideStatus  @default(REQUESTED)
   createdAt   DateTime    @default(now())
 }

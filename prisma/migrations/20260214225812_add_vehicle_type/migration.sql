@@ -4,6 +4,9 @@ CREATE TYPE "Role" AS ENUM ('PASSENGER', 'DRIVER', 'ADMIN');
 -- CreateEnum
 CREATE TYPE "RideStatus" AS ENUM ('REQUESTED', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED');
 
+-- CreateEnum
+CREATE TYPE "VehicleType" AS ENUM ('MOTO', 'ECO', 'CONFORT');
+
 -- CreateTable
 CREATE TABLE "User" (
     "id" TEXT NOT NULL,
@@ -41,6 +44,7 @@ CREATE TABLE "Ride" (
     "destLat" DOUBLE PRECISION NOT NULL,
     "destLng" DOUBLE PRECISION NOT NULL,
     "price" DOUBLE PRECISION NOT NULL,
+    "vehicleType" "VehicleType" NOT NULL DEFAULT 'MOTO',
     "status" "RideStatus" NOT NULL DEFAULT 'REQUESTED',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 

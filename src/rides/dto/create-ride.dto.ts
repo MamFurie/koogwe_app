@@ -1,5 +1,6 @@
-import { IsNumber, IsNotEmpty, IsPositive } from 'class-validator';
+import { IsNumber, IsNotEmpty, IsPositive, IsEnum, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
+import { VehicleType } from '@prisma/client';
 
 export class CreateRideDto {
   @IsNumber()
@@ -26,4 +27,9 @@ export class CreateRideDto {
   @IsPositive()
   @Type(() => Number)
   price: number;
+
+  // ✅ FIX BUG 2 : vehicleType accepté et validé
+  @IsEnum(VehicleType)
+  @IsOptional()
+  vehicleType?: VehicleType;
 }

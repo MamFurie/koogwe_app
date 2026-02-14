@@ -15,8 +15,7 @@ export class RidesController {
     return this.ridesService.create(createRideDto, passengerId);
   }
 
-  // ---- Historique des courses (passager OU chauffeur) ----
-  // ✅ FIX : Cette route n'existait pas, history_screen.dart retournait toujours vide
+  // ---- Historique des courses ----
   @Get('history')
   @UseGuards(AuthGuard)
   getHistory(@Request() req: any) {
@@ -25,7 +24,15 @@ export class RidesController {
     return this.ridesService.getHistory(userId, role);
   }
 
-  // ---- Courses actives pour un chauffeur ----
+  // ✅ FIX BUG 4 : Route stats du chauffeur (manquait complètement)
+  @Get('driver/stats')
+  @UseGuards(AuthGuard)
+  getDriverStats(@Request() req: any) {
+    const driverId = req.user.sub;
+    return this.ridesService.getDriverStats(driverId);
+  }
+
+  // ---- Courses actives ----
   @Get('active')
   @UseGuards(AuthGuard)
   getActiveCourses() {

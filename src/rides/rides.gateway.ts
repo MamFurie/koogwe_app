@@ -13,7 +13,7 @@ import { PrismaService } from '../prisma.service';
 import { RideStatus } from '@prisma/client';
 
 @WebSocketGateway({
-  cors: { origin: '*' },
+  cors: { origin: '*' }, // ✅ Accepte les connexions depuis partout (mobile + web)
 })
 export class RidesGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
@@ -35,12 +35,12 @@ export class RidesGateway
     console.log(`🔌 Client déconnecté: ${client.id}`);
   }
 
-  // ---- Rejoindre une room de course ----
+  // ---- Rejoindre une room ----
   @SubscribeMessage('join_ride')
   handleJoinRide(@ConnectedSocket() client: Socket, @MessageBody() data: { rideId: string }) {
     const room = `ride_${data.rideId}`;
     client.join(room);
-    console.log(`👥 ${client.id} rejoint la room ${room}`);
+    console.log(`👥 ${client.id} rejoint ${room}`);
   }
 
   @SubscribeMessage('leave_ride')
@@ -48,7 +48,7 @@ export class RidesGateway
     client.leave(`ride_${data.rideId}`);
   }
 
-  // ---- Chauffeur en ligne ----
+  // ---- Chauffeur en ligne / hors ligne ----
   @SubscribeMessage('driver_online')
   handleDriverOnline(@ConnectedSocket() client: Socket, @MessageBody() data: { driverId: string }) {
     client.join('drivers_online');
@@ -61,16 +61,15 @@ export class RidesGateway
     console.log(`🔴 Chauffeur ${data.driverId} hors ligne`);
   }
 
-  // ---- Nouvelle course → notifier tous les chauffeurs en ligne ----
+  // ---- Nouvelle course → tous les chauffeurs en ligne ----
   notifyDrivers(rideData: any) {
-    // ✅ FIX : On envoie seulement aux chauffeurs en ligne, pas à TOUT LE MONDE
     this.server.to('drivers_online').emit('new_ride', rideData);
-    console.log(`📢 Nouvelle course ${rideData.id} broadcastée aux chauffeurs en ligne`);
+    console.log(`📢 Nouvelle course ${rideData.id} envoyée aux chauffeurs`);
   }
 
   // ---- Accepter une course ----
   @SubscribeMessage('accept_ride')
-  async handleAcceptRide(@MessageBody() data: { rideId: string; driverId: string }) {
+  async handleAcceptRide(@MessageBody() data: { rideId: string; driverId: string; driverName?: string }) {
     try {
       const driver = await this.prisma.user.findUnique({
         where: { id: data.driverId },
@@ -79,20 +78,16 @@ export class RidesGateway
 
       if (!driver) return;
 
-      // ✅ FIX CRITIQUE : On persiste le changement de statut en BDD
       await this.prisma.ride.update({
         where: { id: data.rideId },
-        data: {
-          status: RideStatus.ACCEPTED,
-          driverId: data.driverId,
-        },
+        data: { status: RideStatus.ACCEPTED, driverId: data.driverId },
       });
 
       const vehicleInfo = driver.driverProfile
         ? `${driver.driverProfile.vehicleMake ?? ''} ${driver.driverProfile.vehicleModel ?? ''} • ${driver.driverProfile.vehicleColor ?? ''}`
         : 'Véhicule non renseigné';
 
-      const update = {
+      this.server.to(`ride_${data.rideId}`).emit(`ride_status_${data.rideId}`, {
         status: 'ACCEPTED',
         driverId: driver.id,
         driverName: driver.name,
@@ -100,15 +95,11 @@ export class RidesGateway
         vehicleInfo,
         licensePlate: driver.driverProfile?.licensePlate ?? 'Non renseigné',
         driverRating: '4.9 ⭐',
-        driverImage: `https://i.pravatar.cc/150?u=${driver.id}`,
-      };
-
-      // ✅ FIX SÉCURITÉ : On envoie SEULEMENT aux membres de la room de cette course
-      this.server.to(`ride_${data.rideId}`).emit(`ride_status_${data.rideId}`, update);
+      });
 
       console.log(`✅ Course ${data.rideId} acceptée par ${driver.name}`);
-    } catch (error) {
-      console.error("Erreur accept_ride:", error);
+    } catch (e) {
+      console.error('Erreur accept_ride:', e);
     }
   }
 
@@ -116,7 +107,6 @@ export class RidesGateway
   @SubscribeMessage('driver_arrived')
   async handleDriverArrived(@MessageBody() data: { rideId: string }) {
     try {
-      // ✅ FIX : Persistance en BDD
       await this.prisma.ride.update({
         where: { id: data.rideId },
         data: { status: RideStatus.ARRIVED },
@@ -126,7 +116,7 @@ export class RidesGateway
         status: 'ARRIVED',
       });
     } catch (e) {
-      console.error("Erreur driver_arrived:", e);
+      console.error('Erreur driver_arrived:', e);
     }
   }
 
@@ -134,7 +124,6 @@ export class RidesGateway
   @SubscribeMessage('start_trip')
   async handleStartTrip(@MessageBody() data: { rideId: string }) {
     try {
-      // ✅ FIX : Persistance en BDD
       await this.prisma.ride.update({
         where: { id: data.rideId },
         data: { status: RideStatus.IN_PROGRESS },
@@ -144,38 +133,57 @@ export class RidesGateway
         status: 'IN_PROGRESS',
       });
     } catch (e) {
-      console.error("Erreur start_trip:", e);
+      console.error('Erreur start_trip:', e);
     }
   }
 
-  // ---- Terminer la course ----
+  // ✅ FIX BUG 1 CRITIQUE : Terminer la course émet MAINTENANT 'trip_finished'
+  // Avant : seulement 'ride_status_${rideId}' → history/wallet jamais mis à jour
+  // Après : émet AUSSI 'trip_finished' avec les données complètes pour les écrans temps réel
   @SubscribeMessage('finish_trip')
   async handleFinishTrip(@MessageBody() data: { rideId: string; price?: number }) {
     try {
-      // ✅ FIX : Persistance en BDD + update du prix final si fourni
-      await this.prisma.ride.update({
+      const updatedRide = await this.prisma.ride.update({
         where: { id: data.rideId },
         data: {
           status: RideStatus.COMPLETED,
           ...(data.price && { price: data.price }),
         },
+        include: {
+          // ✅ On inclut les infos complètes pour les écrans temps réel
+          passenger: { select: { id: true, name: true } },
+          driver: { select: { id: true, name: true } },
+        },
       });
 
+      // 1. Notifier les participants de la course
       this.server.to(`ride_${data.rideId}`).emit(`ride_status_${data.rideId}`, {
         status: 'COMPLETED',
-        finalPrice: data.price,
+        finalPrice: updatedRide.price,
       });
 
-      console.log(`✅ Course ${data.rideId} terminée`);
+      // ✅ 2. Émettre 'trip_finished' globalement pour history_screen et wallet_screen
+      // Contient toutes les infos nécessaires pour la mise à jour temps réel
+      this.server.emit('trip_finished', {
+        id: updatedRide.id,
+        price: updatedRide.price,
+        status: 'COMPLETED',
+        vehicleType: updatedRide.vehicleType,
+        createdAt: updatedRide.createdAt,
+        passenger: updatedRide.passenger,
+        driver: updatedRide.driver,
+      });
+
+      console.log(`✅ Course ${data.rideId} terminée — trip_finished émis`);
     } catch (e) {
-      console.error("Erreur finish_trip:", e);
+      console.error('Erreur finish_trip:', e);
     }
   }
 
-  // ---- Mise à jour GPS du chauffeur ----
+  // ---- GPS du chauffeur ----
   @SubscribeMessage('update_location')
   handleLocationUpdate(@MessageBody() data: { rideId: string; lat: number; lng: number }) {
-    // ✅ FIX SÉCURITÉ : On envoie SEULEMENT à la room de cette course
+    // Seulement aux participants de la course (sécurité)
     this.server.to(`ride_${data.rideId}`).emit(`driver_location_${data.rideId}`, {
       lat: data.lat,
       lng: data.lng,
@@ -187,7 +195,6 @@ export class RidesGateway
   handleChatMessage(
     @MessageBody() data: { rideId: string; senderId: string; message: string; timestamp: string },
   ) {
-    // ✅ On envoie le message seulement aux participants de la course
     this.server.to(`ride_${data.rideId}`).emit(`chat_${data.rideId}`, {
       senderId: data.senderId,
       message: data.message,
