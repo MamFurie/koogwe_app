@@ -13,14 +13,8 @@ export class UsersService {
   constructor(private prisma: PrismaService) {}
 
   async updateVehicle(userId: string, data: UpdateVehicleDto) {
-    // Vérifier que le profil chauffeur existe
-    const profile = await this.prisma.driverProfile.findUnique({
-      where: { userId },
-    });
-
-    if (!profile) {
-      throw new NotFoundException('Profil chauffeur introuvable pour cet utilisateur');
-    }
+    const profile = await this.prisma.driverProfile.findUnique({ where: { userId } });
+    if (!profile) throw new NotFoundException('Profil chauffeur introuvable');
 
     return this.prisma.driverProfile.update({
       where: { userId },
@@ -33,15 +27,54 @@ export class UsersService {
     });
   }
 
+  // ✅ Marquer la vérification faciale comme complète
+  async markFaceVerified(userId: string) {
+    const profile = await this.prisma.driverProfile.findUnique({ where: { userId } });
+    if (!profile) throw new NotFoundException('Profil chauffeur introuvable');
+
+    return this.prisma.driverProfile.update({
+      where: { userId },
+      data: { faceVerified: true, faceVerifiedAt: new Date() },
+    });
+  }
+
+  // ✅ Marquer les documents comme uploadés
+  async markDocumentsUploaded(userId: string) {
+    const profile = await this.prisma.driverProfile.findUnique({ where: { userId } });
+    if (!profile) throw new NotFoundException('Profil chauffeur introuvable');
+
+    return this.prisma.driverProfile.update({
+      where: { userId },
+      data: { documentsUploaded: true, documentsUploadedAt: new Date() },
+    });
+  }
+
+  // ✅ Statut global du chauffeur
+  async getDriverStatus(userId: string) {
+    const profile = await this.prisma.driverProfile.findUnique({ where: { userId } });
+    if (!profile) throw new NotFoundException('Profil chauffeur introuvable');
+
+    return {
+      faceVerified: profile.faceVerified,
+      documentsUploaded: profile.documentsUploaded,
+      adminApproved: profile.adminApproved,
+      // Étape courante dans l'onboarding
+      currentStep: !profile.faceVerified
+        ? 'face_verification'
+        : !profile.documentsUploaded
+        ? 'document_upload'
+        : !profile.adminApproved
+        ? 'pending_admin'
+        : 'active',
+    };
+  }
+
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: { driverProfile: true },
-      // Ne jamais retourner le mot de passe
     });
-
     if (!user) throw new NotFoundException('Utilisateur introuvable');
-
     const { password, verificationToken, ...safeUser } = user;
     return safeUser;
   }

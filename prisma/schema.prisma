@@ -48,13 +48,22 @@ model User {
 }
 
 model DriverProfile {
-  id            String  @id @default(uuid())
-  userId        String  @unique
-  user          User    @relation(fields: [userId], references: [id])
-  vehicleMake   String?
-  vehicleModel  String?
-  vehicleColor  String?
-  licensePlate  String?
+  id                  String   @id @default(uuid())
+  userId              String   @unique
+  user                User     @relation(fields: [userId], references: [id])
+  vehicleMake         String?
+  vehicleModel        String?
+  vehicleColor        String?
+  licensePlate        String?
+
+  // Vérification chauffeur
+  faceVerified        Boolean  @default(false)
+  faceVerifiedAt      DateTime?
+  documentsUploaded   Boolean  @default(false)
+  documentsUploadedAt DateTime?
+  adminApproved       Boolean  @default(false)
+  adminApprovedAt     DateTime?
+  adminNotes          String?
 }
 
 model Ride {
