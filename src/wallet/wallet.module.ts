@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { UsersController } from './users.controller';
-import { UsersService } from './users.service';
+import { WalletController } from './wallet.controller';
+import { WalletService } from './wallet.service';
 import { PrismaService } from '../prisma.service';
 
 @Module({
@@ -15,8 +15,8 @@ import { PrismaService } from '../prisma.service';
       inject: [ConfigService],
     }),
   ],
-  controllers: [UsersController],
-  providers: [UsersService, PrismaService],
-  exports: [UsersService],
+  controllers: [WalletController],
+  providers: [WalletService, PrismaService],
+  exports: [WalletService],
 })
-export class UsersModule {}
+export class WalletModule {}

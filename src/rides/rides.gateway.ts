@@ -10,10 +10,9 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { PrismaService } from '../prisma.service';
-import { RideStatus } from '@prisma/client';
 
 @WebSocketGateway({
-  cors: { origin: '*' }, // ✅ Accepte les connexions depuis partout (mobile + web)
+  cors: { origin: '*' },
 })
 export class RidesGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
@@ -24,23 +23,20 @@ export class RidesGateway
   constructor(private readonly prisma: PrismaService) {}
 
   afterInit() {
-    console.log('✅ Socket Gateway initialisé');
+    console.log('Socket Gateway initialise');
   }
 
   handleConnection(client: Socket) {
-    console.log(`🔌 Client connecté: ${client.id}`);
+    console.log(`Client connecte: ${client.id}`);
   }
 
   handleDisconnect(client: Socket) {
-    console.log(`🔌 Client déconnecté: ${client.id}`);
+    console.log(`Client deconnecte: ${client.id}`);
   }
 
-  // ---- Rejoindre une room ----
   @SubscribeMessage('join_ride')
   handleJoinRide(@ConnectedSocket() client: Socket, @MessageBody() data: { rideId: string }) {
-    const room = `ride_${data.rideId}`;
-    client.join(room);
-    console.log(`👥 ${client.id} rejoint ${room}`);
+    client.join(`ride_${data.rideId}`);
   }
 
   @SubscribeMessage('leave_ride')
@@ -48,26 +44,24 @@ export class RidesGateway
     client.leave(`ride_${data.rideId}`);
   }
 
-  // ---- Chauffeur en ligne / hors ligne ----
   @SubscribeMessage('driver_online')
   handleDriverOnline(@ConnectedSocket() client: Socket, @MessageBody() data: { driverId: string }) {
     client.join('drivers_online');
-    console.log(`🟢 Chauffeur ${data.driverId} en ligne`);
+    console.log(`Chauffeur ${data.driverId} en ligne`);
   }
 
   @SubscribeMessage('driver_offline')
   handleDriverOffline(@ConnectedSocket() client: Socket, @MessageBody() data: { driverId: string }) {
     client.leave('drivers_online');
-    console.log(`🔴 Chauffeur ${data.driverId} hors ligne`);
+    console.log(`Chauffeur ${data.driverId} hors ligne`);
   }
 
-  // ---- Nouvelle course → tous les chauffeurs en ligne ----
   notifyDrivers(rideData: any) {
     this.server.to('drivers_online').emit('new_ride', rideData);
-    console.log(`📢 Nouvelle course ${rideData.id} envoyée aux chauffeurs`);
+    console.log(`Nouvelle course ${rideData.id} envoyee aux chauffeurs`);
   }
 
-  // ---- Accepter une course ----
+  // FIX BUG 3 + 4: Verif chauffeur ACTIVE + race condition via updateMany
   @SubscribeMessage('accept_ride')
   async handleAcceptRide(@MessageBody() data: { rideId: string; driverId: string; driverName?: string }) {
     try {
@@ -78,14 +72,35 @@ export class RidesGateway
 
       if (!driver) return;
 
-      await this.prisma.ride.update({
-        where: { id: data.rideId },
-        data: { status: RideStatus.ACCEPTED, driverId: data.driverId },
+      // FIX BUG 3: string literal au lieu de AccountStatus enum
+      if (driver.accountStatus !== 'ACTIVE') {
+        console.log(`Chauffeur ${data.driverId} non actif (${driver.accountStatus}) - rejet`);
+        return;
+      }
+
+      if (driver.driverProfile && !driver.driverProfile.adminApproved) {
+        console.log(`Chauffeur ${data.driverId} pas encore approuve - rejet`);
+        return;
+      }
+
+      // FIX BUG 4: updateMany avec filtre status=REQUESTED -> anti race condition
+      const updateResult = await this.prisma.ride.updateMany({
+        where: { id: data.rideId, status: 'REQUESTED' as any },
+        data: {
+          status: 'ACCEPTED' as any,
+          driverId: data.driverId,
+          acceptedAt: new Date(),
+        },
       });
 
+      if (updateResult.count === 0) {
+        console.log(`Course ${data.rideId} deja acceptee`);
+        return;
+      }
+
       const vehicleInfo = driver.driverProfile
-        ? `${driver.driverProfile.vehicleMake ?? ''} ${driver.driverProfile.vehicleModel ?? ''} • ${driver.driverProfile.vehicleColor ?? ''}`
-        : 'Véhicule non renseigné';
+        ? `${driver.driverProfile.vehicleMake ?? ''} ${driver.driverProfile.vehicleModel ?? ''} - ${driver.driverProfile.vehicleColor ?? ''}`
+        : 'Vehicule non renseigne';
 
       this.server.to(`ride_${data.rideId}`).emit(`ride_status_${data.rideId}`, {
         status: 'ACCEPTED',
@@ -93,104 +108,87 @@ export class RidesGateway
         driverName: driver.name,
         driverPhone: driver.phone,
         vehicleInfo,
-        licensePlate: driver.driverProfile?.licensePlate ?? 'Non renseigné',
-        driverRating: '4.9 ⭐',
+        licensePlate: driver.driverProfile?.licensePlate ?? 'Non renseigne',
+        driverRating: '4.9',
       });
 
-      console.log(`✅ Course ${data.rideId} acceptée par ${driver.name}`);
+      console.log(`Course ${data.rideId} acceptee par ${driver.name}`);
     } catch (e) {
       console.error('Erreur accept_ride:', e);
     }
   }
 
-  // ---- Chauffeur arrivé ----
   @SubscribeMessage('driver_arrived')
   async handleDriverArrived(@MessageBody() data: { rideId: string }) {
     try {
       await this.prisma.ride.update({
         where: { id: data.rideId },
-        data: { status: RideStatus.ARRIVED },
+        data: { status: 'ARRIVED' as any, arrivedAt: new Date() },
       });
-
-      this.server.to(`ride_${data.rideId}`).emit(`ride_status_${data.rideId}`, {
-        status: 'ARRIVED',
-      });
+      this.server.to(`ride_${data.rideId}`).emit(`ride_status_${data.rideId}`, { status: 'ARRIVED' });
     } catch (e) {
       console.error('Erreur driver_arrived:', e);
     }
   }
 
-  // ---- Démarrer la course ----
   @SubscribeMessage('start_trip')
   async handleStartTrip(@MessageBody() data: { rideId: string }) {
     try {
       await this.prisma.ride.update({
         where: { id: data.rideId },
-        data: { status: RideStatus.IN_PROGRESS },
+        data: { status: 'IN_PROGRESS' as any, startedAt: new Date() },
       });
-
-      this.server.to(`ride_${data.rideId}`).emit(`ride_status_${data.rideId}`, {
-        status: 'IN_PROGRESS',
-      });
+      this.server.to(`ride_${data.rideId}`).emit(`ride_status_${data.rideId}`, { status: 'IN_PROGRESS' });
     } catch (e) {
       console.error('Erreur start_trip:', e);
     }
   }
 
-  // ✅ FIX BUG 1 CRITIQUE : Terminer la course émet MAINTENANT 'trip_finished'
-  // Avant : seulement 'ride_status_${rideId}' → history/wallet jamais mis à jour
-  // Après : émet AUSSI 'trip_finished' avec les données complètes pour les écrans temps réel
   @SubscribeMessage('finish_trip')
   async handleFinishTrip(@MessageBody() data: { rideId: string; price?: number }) {
     try {
       const updatedRide = await this.prisma.ride.update({
         where: { id: data.rideId },
         data: {
-          status: RideStatus.COMPLETED,
+          status: 'COMPLETED' as any,
+          completedAt: new Date(),
           ...(data.price && { price: data.price }),
         },
         include: {
-          // ✅ On inclut les infos complètes pour les écrans temps réel
           passenger: { select: { id: true, name: true } },
           driver: { select: { id: true, name: true } },
         },
       });
 
-      // 1. Notifier les participants de la course
       this.server.to(`ride_${data.rideId}`).emit(`ride_status_${data.rideId}`, {
         status: 'COMPLETED',
         finalPrice: updatedRide.price,
       });
 
-      // ✅ 2. Émettre 'trip_finished' globalement pour history_screen et wallet_screen
-      // Contient toutes les infos nécessaires pour la mise à jour temps réel
       this.server.emit('trip_finished', {
         id: updatedRide.id,
         price: updatedRide.price,
         status: 'COMPLETED',
         vehicleType: updatedRide.vehicleType,
-        createdAt: updatedRide.createdAt,
+        requestedAt: updatedRide.requestedAt,
         passenger: updatedRide.passenger,
         driver: updatedRide.driver,
       });
 
-      console.log(`✅ Course ${data.rideId} terminée — trip_finished émis`);
+      console.log(`Course ${data.rideId} terminee`);
     } catch (e) {
       console.error('Erreur finish_trip:', e);
     }
   }
 
-  // ---- GPS du chauffeur ----
   @SubscribeMessage('update_location')
   handleLocationUpdate(@MessageBody() data: { rideId: string; lat: number; lng: number }) {
-    // Seulement aux participants de la course (sécurité)
     this.server.to(`ride_${data.rideId}`).emit(`driver_location_${data.rideId}`, {
       lat: data.lat,
       lng: data.lng,
     });
   }
 
-  // ---- Chat ----
   @SubscribeMessage('chat_message')
   handleChatMessage(
     @MessageBody() data: { rideId: string; senderId: string; message: string; timestamp: string },
@@ -200,5 +198,29 @@ export class RidesGateway
       message: data.message,
       timestamp: data.timestamp,
     });
+  }
+
+  @SubscribeMessage('cancel_ride')
+  async handleCancelRide(@MessageBody() data: { rideId: string; cancelledBy: string }) {
+    try {
+      const ride = await this.prisma.ride.findUnique({ where: { id: data.rideId } });
+      if (!ride) return;
+
+      if (['IN_PROGRESS', 'COMPLETED'].includes(ride.status)) return;
+
+      await this.prisma.ride.update({
+        where: { id: data.rideId },
+        data: { status: 'CANCELLED' as any, cancelledAt: new Date() },
+      });
+
+      this.server.to(`ride_${data.rideId}`).emit(`ride_status_${data.rideId}`, {
+        status: 'CANCELLED',
+        cancelledBy: data.cancelledBy,
+      });
+
+      console.log(`Course ${data.rideId} annulee par ${data.cancelledBy}`);
+    } catch (e) {
+      console.error('Erreur cancel_ride:', e);
+    }
   }
 }

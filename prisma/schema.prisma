@@ -1,4 +1,4 @@
-// prisma/schema.prisma
+// prisma/schema.prisma - VERSION COMPLÈTE KOOGWE
 
 generator client {
   provider = "prisma-client-js"
@@ -8,6 +8,10 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+// ========================================
+// ENUMS
+// ========================================
 
 enum Role {
   PASSENGER
@@ -24,67 +28,261 @@ enum RideStatus {
   CANCELLED
 }
 
-// ✅ FIX BUG 2 : Ajout enum VehicleType
 enum VehicleType {
   MOTO
   ECO
   CONFORT
 }
 
-model User {
-  id                String   @id @default(uuid())
-  email             String   @unique
-  name              String?
-  password          String
-  phone             String?
-  role              Role     @default(PASSENGER)
-  isVerified        Boolean  @default(false)
-  verificationToken String?
-  createdAt         DateTime @default(now())
+enum AccountStatus {
+  EMAIL_NOT_VERIFIED
+  EMAIL_VERIFIED
+  FACE_VERIFICATION_PENDING
+  DOCUMENTS_PENDING
+  ADMIN_REVIEW_PENDING
+  ACTIVE
+  REJECTED
+  SUSPENDED
+}
 
-  driverProfile     DriverProfile?
-  ridesAsPassenger  Ride[]   @relation("PassengerRides")
-  ridesAsDriver     Ride[]   @relation("DriverRides")
+enum DocumentType {
+  ID_CARD_FRONT
+  ID_CARD_BACK
+  PASSPORT
+  SELFIE
+  SELFIE_WITH_ID
+  DRIVERS_LICENSE
+  VEHICLE_REGISTRATION
+  INSURANCE
+  TECHNICAL_CONTROL
+}
+
+enum DocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum TransactionType {
+  RECHARGE
+  PAYMENT
+  REFUND
+  WITHDRAWAL
+  COMMISSION
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  WALLET
+}
+
+enum Language {
+  ES
+  EN
+  PT
+  FR
+}
+
+// ========================================
+// MODELS
+// ========================================
+
+model User {
+  id                     String         @id @default(uuid())
+  email                  String         @unique
+  name                   String?
+  password               String
+  phone                  String?
+
+  // Localisation
+  language               Language       @default(ES)
+
+  role                   Role           @default(PASSENGER)
+
+  // Vérifications email
+  isVerified             Boolean        @default(false)
+  verificationToken      String?
+  emailCodeExpiry        DateTime?
+
+  // Vérification faciale
+  faceVerified           Boolean        @default(false)
+  faceImageUrl           String?
+
+  // Statut global du compte
+  accountStatus          AccountStatus  @default(EMAIL_NOT_VERIFIED)
+
+  // Métadonnées
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  lastLoginAt            DateTime?
+
+  // Relations
+  driverProfile          DriverProfile?
+  ridesAsPassenger       Ride[]         @relation("PassengerRides")
+  ridesAsDriver          Ride[]         @relation("DriverRides")
+  wallet                 Wallet?
+  transactions           Transaction[]
+  documents              Document[]
+  notifications          Notification[]
 }
 
 model DriverProfile {
-  id                  String   @id @default(uuid())
-  userId              String   @unique
-  user                User     @relation(fields: [userId], references: [id])
+  id                  String    @id @default(uuid())
+  userId              String    @unique
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Véhicule
   vehicleMake         String?
   vehicleModel        String?
   vehicleColor        String?
   licensePlate        String?
+  vehicleYear         Int?
 
   // Vérification chauffeur
-  faceVerified        Boolean  @default(false)
+  faceVerified        Boolean   @default(false)
   faceVerifiedAt      DateTime?
-  documentsUploaded   Boolean  @default(false)
+  documentsUploaded   Boolean   @default(false)
   documentsUploadedAt DateTime?
-  adminApproved       Boolean  @default(false)
+  adminApproved       Boolean   @default(false)
   adminApprovedAt     DateTime?
   adminNotes          String?
+
+  // Stats
+  totalRides          Int       @default(0)
+  rating              Float     @default(0.0)
+  totalEarnings       Float     @default(0.0)
+
+  // Disponibilité
+  isOnline            Boolean   @default(false)
+  currentLat          Float?
+  currentLng          Float?
+
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([isOnline, currentLat, currentLng])
+}
+
+model Wallet {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance   Float    @default(0.0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Transaction {
+  id               String            @id @default(uuid())
+  userId           String
+  user             User              @relation(fields: [userId], references: [id])
+
+  type             TransactionType
+  amount           Float
+  status           TransactionStatus @default(PENDING)
+
+  rideId           String?
+  paymentMethod    PaymentMethod?
+  stripePaymentId  String?
+  reference        String?
+  rejectionReason  String?
+
+  createdAt        DateTime          @default(now())
+  completedAt      DateTime?
+
+  @@index([userId, createdAt])
+}
+
+model Document {
+  id              String         @id @default(uuid())
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type            DocumentType
+  fileUrl         String
+  status          DocumentStatus @default(PENDING)
+
+  rejectionReason String?
+  uploadedAt      DateTime       @default(now())
+  reviewedAt      DateTime?
+  reviewedBy      String?
+
+  @@index([status, uploadedAt])
 }
 
 model Ride {
-  id          String      @id @default(uuid())
+  id              String      @id @default(uuid())
 
-  passengerId String
-  passenger   User        @relation("PassengerRides", fields: [passengerId], references: [id])
+  passengerId     String
+  passenger       User        @relation("PassengerRides", fields: [passengerId], references: [id])
 
-  driverId    String?
-  driver      User?       @relation("DriverRides", fields: [driverId], references: [id])
+  driverId        String?
+  driver          User?       @relation("DriverRides", fields: [driverId], references: [id])
 
-  originLat   Float
-  originLng   Float
-  destLat     Float
-  destLng     Float
+  // Trajets
+  originLat       Float
+  originLng       Float
+  originAddress   String?
+  destLat         Float
+  destLng         Float
+  destAddress     String?
 
-  price       Float
+  // Détails course
+  distance        Float?
+  duration        Int?
+  price           Float
+  vehicleType     VehicleType @default(MOTO)
 
-  // ✅ FIX BUG 2 : vehicleType stocké en BDD
-  vehicleType VehicleType @default(MOTO)
+  // Options confort
+  airConditioning Boolean     @default(false)
+  wifi            Boolean     @default(false)
+  usb             Boolean     @default(false)
+  music           Boolean     @default(false)
 
-  status      RideStatus  @default(REQUESTED)
-  createdAt   DateTime    @default(now())
+  // Paiement
+  paymentMethod   PaymentMethod @default(CASH)
+  isPaid          Boolean     @default(false)
+
+  // Statut
+  status          RideStatus  @default(REQUESTED)
+
+  // Horaires
+  requestedAt     DateTime    @default(now())
+  acceptedAt      DateTime?
+  arrivedAt       DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  cancelledAt     DateTime?
+
+  // Évaluation
+  passengerRating Float?
+  driverRating    Float?
+  passengerComment String?
+  driverComment   String?
+
+  @@index([passengerId, requestedAt])
+  @@index([driverId, requestedAt])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title     String
+  body      String
+  type      String?
+  isRead    Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
 }

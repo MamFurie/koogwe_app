@@ -1,6 +1,12 @@
-import { IsNumber, IsNotEmpty, IsPositive, IsEnum, IsOptional } from 'class-validator';
+import { IsNumber, IsNotEmpty, IsPositive, IsEnum, IsOptional, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
-import { VehicleType } from '@prisma/client';
+
+// FIX: VehicleType defini localement au lieu de @prisma/client (non disponible au runtime)
+enum VehicleType {
+  MOTO = 'MOTO',
+  ECO = 'ECO',
+  CONFORT = 'CONFORT',
+}
 
 export class CreateRideDto {
   @IsNumber()
@@ -13,6 +19,10 @@ export class CreateRideDto {
   @Type(() => Number)
   originLng: number;
 
+  @IsString()
+  @IsOptional()
+  originAddress?: string;
+
   @IsNumber()
   @IsNotEmpty()
   @Type(() => Number)
@@ -23,13 +33,16 @@ export class CreateRideDto {
   @Type(() => Number)
   destLng: number;
 
+  @IsString()
+  @IsOptional()
+  destAddress?: string;
+
   @IsNumber()
   @IsPositive()
   @Type(() => Number)
   price: number;
 
-  // ✅ FIX BUG 2 : vehicleType accepté et validé
   @IsEnum(VehicleType)
   @IsOptional()
-  vehicleType?: VehicleType;
+  vehicleType?: string;
 }

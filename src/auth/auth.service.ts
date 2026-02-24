@@ -23,10 +23,11 @@ export class AuthService {
     const existing = await this.prisma.user.findUnique({
       where: { email: createAuthDto.email },
     });
-    if (existing) throw new ConflictException('Cet email est déjà utilisé');
+    if (existing) throw new ConflictException('Cet email est deja utilise');
 
     const hashedPassword = await bcrypt.hash(createAuthDto.password, 12);
-    const verificationCode = Math.floor(1000 + Math.random() * 9000).toString();
+    // FIX BUG 12: code 6 chiffres coherent avec EmailVerificationService
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
 
     const newUser = await this.prisma.user.create({
       data: {
@@ -35,35 +36,39 @@ export class AuthService {
         password: hashedPassword,
         phone: createAuthDto.phone,
         role: createAuthDto.role ?? 'PASSENGER',
-        // En dev : compte activé directement. En prod, mettre false et envoyer l'email.
         isVerified: true,
+        // FIX BUG 1+12: accountStatus ACTIVE en mode dev
+        accountStatus: 'ACTIVE',
         verificationToken: verificationCode,
-        // Créer le profil chauffeur automatiquement si DRIVER
+        // Creer le profil chauffeur automatiquement si DRIVER
         driverProfile:
           createAuthDto.role === 'DRIVER'
             ? { create: {} }
             : undefined,
+        // FIX BUG 1 CRITIQUE: Wallet cree automatiquement a l'inscription
+        // Avant: le wallet n'existait que si verifyCode() etait appele -> plantage paiement
+        wallet: { create: { balance: 0 } },
       },
     });
 
-    // En prod, décommenter :
+    // En prod, decommmenter:
     // await this.mailService.sendVerificationCode(newUser.email, verificationCode);
 
-    return { message: 'Compte créé avec succès', email: newUser.email };
+    return { message: 'Compte cree avec succes', email: newUser.email };
   }
 
-  // ---- VÉRIFICATION EMAIL ----
+  // ---- VERIFICATION EMAIL ----
   async verifyEmail(email: string, code: string) {
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) throw new BadRequestException('Email introuvable');
-    if (user.isVerified) return { message: 'Compte déjà vérifié' };
+    if (user.isVerified) return { message: 'Compte deja verifie' };
     if (user.verificationToken !== code) throw new BadRequestException('Code invalide');
 
     await this.prisma.user.update({
       where: { email },
       data: { isVerified: true, verificationToken: null },
     });
-    return { message: 'Compte vérifié avec succès !' };
+    return { message: 'Compte verifie avec succes !' };
   }
 
   // ---- CONNEXION ----
@@ -72,10 +77,23 @@ export class AuthService {
 
     if (!user) throw new UnauthorizedException('Email incorrect');
     if (!user.isVerified)
-      throw new UnauthorizedException('Veuillez vérifier votre email avant de vous connecter.');
+      throw new UnauthorizedException('Veuillez verifier votre email avant de vous connecter.');
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) throw new UnauthorizedException('Mot de passe incorrect');
+
+    // FIX: Verifier que le compte n'est pas suspendu/rejete
+    if (user.accountStatus === 'SUSPENDED') {
+      throw new UnauthorizedException('Votre compte a ete suspendu. Contactez le support.');
+    }
+    if (user.accountStatus === 'REJECTED') {
+      throw new UnauthorizedException('Votre compte a ete rejete. Contactez le support.');
+    }
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
 
     const payload = { sub: user.id, email: user.email, role: user.role };
 
@@ -86,6 +104,7 @@ export class AuthService {
         email: user.email,
         name: user.name,
         role: user.role,
+        accountStatus: user.accountStatus,
       },
     };
   }

@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { RidesGateway } from './rides.gateway';
 import { CreateRideDto } from './dto/create-ride.dto';
-import { RideStatus, VehicleType } from '@prisma/client';
 
 @Injectable()
 export class RidesService {
@@ -11,19 +10,19 @@ export class RidesService {
     private ridesGateway: RidesGateway,
   ) {}
 
-  // ---- Créer une course ----
   async create(createRideDto: CreateRideDto, passengerId: string) {
     const newRide = await this.prisma.ride.create({
       data: {
         passengerId,
         originLat: Number(createRideDto.originLat),
         originLng: Number(createRideDto.originLng),
+        originAddress: createRideDto.originAddress,
         destLat: Number(createRideDto.destLat),
         destLng: Number(createRideDto.destLng),
+        destAddress: createRideDto.destAddress,
         price: Number(createRideDto.price),
-        // ✅ FIX BUG 2 : vehicleType sauvegardé
-        vehicleType: createRideDto.vehicleType ?? VehicleType.MOTO,
-        status: RideStatus.REQUESTED,
+        vehicleType: (createRideDto.vehicleType ?? 'MOTO') as any,
+        status: 'REQUESTED' as any,
       },
       include: {
         passenger: {
@@ -36,69 +35,68 @@ export class RidesService {
     return newRide;
   }
 
-  // ✅ FIX BUG 3 : getHistory retourne la structure complète attendue par Flutter
   async getHistory(userId: string, role: string) {
     const where =
       role === 'DRIVER'
-        ? { driverId: userId, status: RideStatus.COMPLETED }
+        ? { driverId: userId, status: 'COMPLETED' as any }
         : { passengerId: userId };
 
     const rides = await this.prisma.ride.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { requestedAt: 'desc' },
       take: 50,
       include: {
-        // ✅ On inclut les objets complets passenger et driver
         passenger: { select: { id: true, name: true, email: true, phone: true } },
         driver: { select: { id: true, name: true, email: true, phone: true } },
       },
     });
 
-    // ✅ Retourne la structure complète avec passenger et driver comme objets
     return rides.map((ride) => ({
       id: ride.id,
       price: ride.price,
       status: ride.status,
       vehicleType: ride.vehicleType,
-      createdAt: ride.createdAt,
+      requestedAt: ride.requestedAt,
       originLat: ride.originLat,
       originLng: ride.originLng,
+      originAddress: ride.originAddress,
       destLat: ride.destLat,
       destLng: ride.destLng,
-      // ✅ Objets imbriqués pour Flutter : r['passenger']['name'] fonctionne
+      destAddress: ride.destAddress,
       passenger: ride.passenger
         ? { id: ride.passenger.id, name: ride.passenger.name, email: ride.passenger.email }
         : null,
       driver: ride.driver
         ? { id: ride.driver.id, name: ride.driver.name, email: ride.driver.email }
         : null,
-      // Champs plats pour compatibilité
-      name: role === 'DRIVER'
-        ? (ride.passenger?.name ?? 'Passager')
-        : (ride.driver?.name ?? 'Chauffeur'),
-      rating: '5.0',
-      dist: '—',
-      time: '—',
-      date: ride.createdAt.toLocaleDateString('fr-FR'),
+      name:
+        role === 'DRIVER'
+          ? (ride.passenger?.name ?? 'Passager')
+          : (ride.driver?.name ?? 'Chauffeur'),
+      rating:
+        role === 'DRIVER'
+          ? (ride.passengerRating?.toFixed(1) ?? null)
+          : (ride.driverRating?.toFixed(1) ?? null),
+      dist: ride.distance ? `${(ride.distance / 1000).toFixed(1)} km` : null,
+      time: ride.duration ? `${Math.round(ride.duration / 60)} min` : null,
+      date: ride.requestedAt.toLocaleDateString('fr-FR'),
     }));
   }
 
-  // ---- Courses actives ----
   async getActiveCourses() {
     return this.prisma.ride.findMany({
       where: {
         status: {
-          in: [RideStatus.REQUESTED, RideStatus.ACCEPTED, RideStatus.ARRIVED, RideStatus.IN_PROGRESS],
+          in: ['REQUESTED', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] as any,
         },
       },
       include: {
         passenger: { select: { id: true, name: true, phone: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { requestedAt: 'desc' },
     });
   }
 
-  // ✅ FIX BUG 4 : Stats du chauffeur (route manquante)
   async getDriverStats(driverId: string) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -106,23 +104,30 @@ export class RidesService {
     const todayRides = await this.prisma.ride.findMany({
       where: {
         driverId,
-        status: RideStatus.COMPLETED,
-        createdAt: { gte: today },
+        status: 'COMPLETED' as any,
+        requestedAt: { gte: today },
       },
     });
 
     const allRides = await this.prisma.ride.findMany({
-      where: { driverId, status: RideStatus.COMPLETED },
+      where: { driverId, status: 'COMPLETED' as any },
     });
 
     const dailyEarnings = todayRides.reduce((sum, r) => sum + r.price, 0);
     const totalEarnings = allRides.reduce((sum, r) => sum + r.price, 0);
+
+    const ratedRides = allRides.filter((r) => r.driverRating != null);
+    const avgRating =
+      ratedRides.length > 0
+        ? ratedRides.reduce((sum, r) => sum + (r.driverRating ?? 0), 0) / ratedRides.length
+        : null;
 
     return {
       dailyEarnings: Math.round(dailyEarnings),
       totalEarnings: Math.round(totalEarnings),
       todayRides: todayRides.length,
       totalRides: allRides.length,
+      rating: avgRating ? avgRating.toFixed(1) : null,
     };
   }
 }
